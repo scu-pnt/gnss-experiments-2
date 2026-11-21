@@ -10,6 +10,9 @@ const FREQ_RANGE = 5e3;                         // Hz
 const FREQ_STEP = 250;                          // Hz
 const PEAK_RATIO_THRESHOLD = 1.5;
 
+// other preferences
+const IQ_BUF_LEN = 500;                         // how many IQ points to buffer per channel
+
 // generate PRN codes
 const generate_codes = () => {
 
@@ -95,26 +98,37 @@ const process_samples = ([I,Q]) => {
 
         if(channel.state == CHANNEL_STATE.TRACKING) {
 
-            if(!channel.)
+            if(!channel.IQ) {
+                channel.IQ = [];             
+            }
 
             // carrier removal
             const I_freq_shifted = new Float32Array(I.length);
+            const Q_freq_shifted = new Float32Array(I.length);
             for(let i = 0; i < I.length; i++) {
                 const [nco_i, nco_q] = nco(i+num_samples, channel.freq_shift);
-                [I_shifted, _] = cmul(I[i], Q[i], nco_i, nco_q);
+                [I_shifted, Q_shifted] = cmul(I[i], Q[i], nco_i, nco_q);
                 I_freq_shifted[i] = I_shifted;
+                Q_freq_shifted[i] = Q_shifted;
             }
 
             // correlate
-            let correl_sum = 0;
+            let correl_sum_I = 0;
+            let correl_sum_Q = 0;
             for(let i = 0; i < I.length; i++) {
-                correl_sum += sample_code(channel.prn_num, i+num_samples, channel.code_delay) * I_freq_shifted[i];
+                const code = sample_code(channel.prn_num, i+num_samples, channel.code_delay);
+                correl_sum_I += code * I_freq_shifted[i];
+                correl_sum_Q += code * Q_freq_shifted[i];
             }
 
-            
-
+            // TODO I&D
+            channel.IQ.push([correl_sum_I, correl_sum_Q]);
+            if(channel.IQ.length == IQ_BUF_LEN) {
+                channel.IQ.shift();
+            }
 
             // refine tracking estimates
+            // TODO
 
         } else if(channel.state == CHANNEL_STATE.SEARCHING) {
 
@@ -223,17 +237,16 @@ const init_displays = () => {
         channel.dom.tracking_stats = div.querySelector(".tracking-stats");
         channel.dom.code_delay = div.querySelector(".code-delay");
         channel.dom.freq_shift = div.querySelector(".freq-shift");
-        
-        channel.dom.search_stats = div.querySelector(".search-stats");
-        channel.dom.search_progress = div.querySelector(".search-progress");
-        channel.dom.peak_ratio = div.querySelector(".peak-ratio");
 
+        channel.dom.search_progress = div.querySelector(".search-progress");
+        channel.dom.num_integrations = div.querySelector(".num-integrations");
+
+        channel.dom.search_results = div.querySelector(".search-results");
+        channel.dom.peak_ratio = div.querySelector(".peak-ratio");
         channel.dom.correls_plot = div.querySelector(".correls-plot");
         channel.dom.correls_plot_ctx = channel.dom.correls_plot.getContext("2d");
-
         channel.dom.correls_plot_raw = div.querySelector(".correls-plot-raw");
         channel.dom.correls_plot_raw_ctx = channel.dom.correls_plot_raw.getContext("2d");
-
 
         channel_list.append(div);
 
@@ -255,11 +268,14 @@ const update_displays = () => {
             channel.dom.tracking_stats.style.display = "none";
         }
 
-        // if acquisition data exists, show it
-        if(channel.correls) {
+        if(channel.num_integrations > 0) {
+            channel.dom.search_results.style.display = "none";
+            channel.dom.search_progress.style.display = "";
+            channel.dom.num_integrations.textContent = `${NUM_INTEGRATIONS - channel.num_integrations} / ${NUM_INTEGRATIONS}`;
+        } else if(channel.num_integrations == 0) {
             
-            channel.dom.search_stats.style.display = "";
-            channel.dom.search_progress.textContent = `${NUM_INTEGRATIONS - channel.num_integrations} / ${NUM_INTEGRATIONS}`;
+            channel.dom.search_results.style.display = "";
+            channel.dom.search_progress.style.display = "none";
             channel.dom.peak_ratio.textContent = Number(channel.peak_ratio).toPrecision(3);
 
             // acquisition code indicates that replot is necessary by setting correls_plot_stale
@@ -302,20 +318,11 @@ const update_displays = () => {
                 // highlight peak
                 ctx.strokeStyle = 'rgba(255,0,0,50%)';
                 ctx.beginPath();
-                ctx.arc(canvas.width * channel.peak_delay_bin / channel.correls[0].length, canvas.height * channel.peak_f_bin / channel.correls.length, 30, 0, 2 * Math.PI);
+                ctx.arc(canvas.width * channel.peak_delay_bin / channel.correls[0].length, canvas.height * channel.peak_f_bin / channel.correls.length, 15, 0, 2 * Math.PI);
                 ctx.stroke();
 
                 channel.dom.correls_plot_stale = false;
 
-            }
-
-            // don't show peak ratio or correlation plots if in the middle of searching
-            if(channel.num_integrations != 0) {
-                channel.dom.peak_ratio.style.display = "none";
-                channel.dom.correls_plot.style.display = "none";
-            } else {
-                channel.dom.peak_ratio.style.display = "";
-                channel.dom.correls_plot.style.display = "";
             }
 
         } 
