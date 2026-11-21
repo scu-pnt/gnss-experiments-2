@@ -1,0 +1,19 @@
+body {
+    font-family: sans-serif;
+}
+
+#channels-list {
+    display: flex;
+    flex-direction: column;
+}
+
+#channels-list > div {
+    border: 1px solid #888888;
+    border-radius: 5px;
+    padding: 0.5em;
+    margin-bottom: 1em;
+}
+
+#channels-list > div h3 {
+    margin-top: 0;
+}
