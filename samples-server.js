@@ -2,7 +2,6 @@ const express = require("express");
 const fs = require("node:fs/promises");
 
 let dataFile = null;
-fs.open(process.argv[2]).then(handle => dataFile = handle);
 
 const app = express();
 app.use(express.static("static"));
@@ -13,12 +12,19 @@ const buf = Buffer.alloc(SAMPLES_PER_CHUNK * 4 * 2);
 const samples = new Float32Array(buf.buffer);
 
 const I = new Float32Array(SAMPLES_PER_CHUNK);
-const Q = new Float32Array(SAMPLES_PER_CHUNK)
+const Q = new Float32Array(SAMPLES_PER_CHUNK);
 
 app.get("/samples", async (req, res) => {
 
     const num_read = Number(req.query.n);
-    const {bytesRead} = await dataFile.read(buf, null, null, num_read == 0 ? 0 : -1);
+    if(num_read == 0) {
+        if(dataFile) {
+            dataFile.close();
+        }
+        dataFile = await fs.open(process.argv[2]);
+    }
+
+    const {bytesRead} = await dataFile.read(buf, 0, null, num_read == 0 ? 0 : -1);
     if(bytesRead == 0) {
         res.json(null);
     }
@@ -31,10 +37,6 @@ app.get("/samples", async (req, res) => {
 
     res.json([Array.from(I), Array.from(Q)]);
     
-});
-
-app.post("/reset", (req, res) => {
-    dataFile.reset
 });
 
 app.listen(80, () => console.log("Listening!"));

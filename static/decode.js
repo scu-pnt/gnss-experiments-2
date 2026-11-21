@@ -87,7 +87,7 @@ const CHANNEL_STATE = {
 for(const prn in codes) {
     channels.push({
         prn_num: prn,                       
-        state: CHANNEL_STATE.NOT_FOUND
+        state: prn == 15 ? CHANNEL_STATE.SEARCHING : CHANNEL_STATE.NOT_FOUND
     });
 }
 
@@ -227,9 +227,7 @@ const process_samples = ([I,Q]) => {
 
                 channel.dom.correls_plot_stale = true;
 
-                // TODO remove this
-                if(channel.prn_num < 32)
-                    channels[channel.prn_num].state = CHANNEL_STATE.SEARCHING;
+                console.log(max1, max2);
 
             }
 
