@@ -12,8 +12,9 @@ const FREQ_STEP = 250;                          // Hz
 const PEAK_RATIO_THRESHOLD = 1.3;
 
 // graphing preferences
-const IQ_BUF_LEN = 200;                         // how many IQ points to buffer per channel
-const IQ_CONSTELLATION_POINTS = 20;             // how many points get accumulated per constellation draw
+let IQ_BUF_LEN = 200;                          // how many IQ points to buffer per channel
+let IQ_CONSTELLATION_POINTS = 10;              // how many points get accumulated per constellation draw
+let CONSTELLATION_R = 15;
 
 // generate PRN codes
 const generate_codes = () => {
@@ -90,7 +91,8 @@ for(const prn in codes) {
     channels.push({
         prn_num: prn,                       
         state: CHANNEL_STATE.NOT_FOUND,
-        search_cooldown: NUM_INTEGRATIONS_ACQ*i
+        //search_cooldown: NUM_INTEGRATIONS_ACQ*i
+        search_cooldown: prn == 22 ? 0 : 1e10
     });
     i++;
 }
@@ -278,6 +280,8 @@ const init_displays = () => {
         channel.dom.freq_shift = div.querySelector(".freq-shift");
         channel.dom.iq_plot = div.querySelector(".iq-plot");
         channel.dom.iq_plot_ctx = channel.dom.iq_plot.getContext("2d");
+        channel.dom.iq_constellation_plot = div.querySelector(".iq-constellation");
+        channel.dom.iq_constellation_plot_ctx = channel.dom.iq_constellation_plot.getContext("2d");
 
         channel.dom.search_progress = div.querySelector(".search-progress");
         channel.dom.num_integrations = div.querySelector(".num-integrations");
@@ -371,7 +375,25 @@ const plot_iq_waveform = channel => {
 
 const plot_iq_constellation = channel => {
 
-    // TODO...
+    const canvas = channel.dom.iq_constellation_plot, ctx = channel.dom.iq_constellation_plot_ctx;
+    
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // draw guide lines
+    ctx.beginPath();
+    ctx.moveTo(canvas.width/2, 0);
+    ctx.lineTo(canvas.width/2, canvas.height);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, canvas.height/2);
+    ctx.lineTo(canvas.width, canvas.height/2);
+    ctx.stroke();
+
+    for(const [I,Q] of channel.dom.iq_points_buf) {
+        ctx.beginPath();
+        ctx.arc(canvas.width/2 + I*CONSTELLATION_R, canvas.height/2 + Q*CONSTELLATION_R, 2, 0, 2 * Math.PI);
+        ctx.fill();
+    }
 
 };
 
