@@ -11,8 +11,9 @@ const FREQ_RANGE = 5e3;                         // Hz
 const FREQ_STEP = 250;                          // Hz
 const PEAK_RATIO_THRESHOLD = 1.3;
 
-// other preferences
+// graphing preferences
 const IQ_BUF_LEN = 200;                         // how many IQ points to buffer per channel
+const IQ_CONSTELLATION_POINTS = 20;             // how many points get accumulated per constellation draw
 
 // generate PRN codes
 const generate_codes = () => {
@@ -97,8 +98,8 @@ for(const prn in codes) {
 // track how many samples have been processed
 let num_samples = 0;
 
-const ingest_event = str => {
-    console.log(str); // TODO make this do something
+const log_event = str => {
+    console.log(str); // TODO make this display somewhere on the webpage
 };
 
 const process_samples = ([I,Q]) => {
@@ -145,11 +146,8 @@ const process_samples = ([I,Q]) => {
                 channel.integrating_I = [];
                 channel.integrating_Q = [];
 
-                channel.IQ.push([integrated_I/NUM_INTEGRATIONS_TRACK, integrated_Q/NUM_INTEGRATIONS_TRACK]);
-                if(channel.IQ.length == IQ_BUF_LEN) {
-                    channel.IQ.shift();
-                }
-                channel.dom.iq_plot_stale = true;
+                channel.IQ = [integrated_I/NUM_INTEGRATIONS_TRACK, integrated_Q/NUM_INTEGRATIONS_TRACK];
+                channel.dom.iq_updated = true;
 
             }
 
@@ -225,7 +223,7 @@ const process_samples = ([I,Q]) => {
                 channel.peak_delay_bin = max1_delay_bin;
 
                 if(channel.peak_ratio > PEAK_RATIO_THRESHOLD) {
-                    ingest_event(`acquired PRN ${channel.prn_num} at peak ratio ${channel.peak_ratio}`);
+                    log_event(`acquired PRN ${channel.prn_num} at peak ratio ${channel.peak_ratio}`);
                     channel.state = CHANNEL_STATE.TRACKING;
                     channel.freq_shift = -FREQ_RANGE + max1_f_bin*FREQ_STEP;
                     channel.code_delay = max1_delay_bin;
@@ -341,13 +339,14 @@ const plot_correls = channel => {
 
 };  
 
-const plot_iq = channel => {
+// TODO make this a generally reusable plotting function
+const plot_iq_waveform = channel => {
 
     const canvas = channel.dom.iq_plot, ctx = channel.dom.iq_plot_ctx;
 
     // scale so that zero is centered and no datapoints are clipped
     let max = 0;
-    for(const [I,Q] of channel.IQ) {
+    for(const [I,Q] of channel.dom.iq_buf) {
         max = Math.max(max, Math.abs(I), Math.abs(Q));
     }
 
@@ -356,9 +355,9 @@ const plot_iq = channel => {
     for(const stream of [0,1]) {
         ctx.strokeStyle = ["#ff0000", "#0000ff"][stream];
         ctx.beginPath();
-        for(let i = 0; i < channel.IQ.length; i++) {
-            const value = channel.IQ[i][stream];
-            const x = i/channel.IQ.length * (canvas.width-20) + 10;
+        for(let i = 0; i < channel.dom.iq_buf.length; i++) {
+            const value = channel.dom.iq_buf[i][stream];
+            const x = i/channel.dom.iq_buf.length * (canvas.width-20) + 10;
             const y = value/max * (canvas.height/2-10) + canvas.height/2;
             if(i == 0)
                 ctx.moveTo(x, y);
@@ -367,6 +366,12 @@ const plot_iq = channel => {
         }
         ctx.stroke();   
     }
+
+};
+
+const plot_iq_constellation = channel => {
+
+    // TODO...
 
 };
 
@@ -391,8 +396,29 @@ const update_displays = () => {
             channel.dom.code_delay.textContent = channel.code_delay;
             channel.dom.freq_shift.textContent = channel.freq_shift;
 
-            if(channel.dom.iq_plot_stale) {
-                plot_iq(channel);
+            // if new iq points are available...
+            if(channel.dom.iq_updated) {
+                
+                // update the waveform buffer
+                if(!channel.dom.iq_buf) {
+                    channel.dom.iq_buf = [];
+                }
+                channel.dom.iq_buf.push(channel.IQ);
+                if(channel.dom.iq_buf.length > IQ_BUF_LEN) {
+                    channel.dom.iq_buf.shift();
+                }
+
+                // update the constellation buffer
+                if(!channel.dom.iq_points_buf) {
+                    channel.dom.iq_points_buf = [];
+                }
+                channel.dom.iq_points_buf.push(channel.IQ);
+                if(channel.dom.iq_points_buf.length > IQ_CONSTELLATION_POINTS) {
+                    plot_iq_constellation(channel);
+                    channel.dom.iq_points_buf = [];
+                }
+
+                plot_iq_waveform(channel);
                 channel.dom.iq_plot_stale = false;
             }
 

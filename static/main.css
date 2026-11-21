@@ -3,15 +3,15 @@ body {
 }
 
 #channels-list {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1em;
 }
 
 #channels-list > div {
     border: 1px solid #888888;
     border-radius: 5px;
     padding: 0.5em;
-    margin-bottom: 1em;
 }
 
 #channels-list > div h3 {
