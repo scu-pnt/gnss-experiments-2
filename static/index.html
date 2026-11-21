@@ -20,11 +20,11 @@
                 <p class="tracking-stats" style="display: none">
                     <b>Code delay:</b> <span class="code-delay"></span> chips<br>
                     <b>Carrier shift:</b> <span class="freq-shift"></span> Hz<br>
-                    <canvas class="iq-plot" width="500" height="100"></canvas>
-                    <canvas class="iq-plot" width="500" height="100"></canvas>
+                    <canvas class="iq-plot" width="500" height="150"></canvas>
+                    <canvas class="iq-constellation" width="150" height="150"></canvas>
                 </p>
                 <p class="search-progress" style="display: none">
-                    <b>Integrations:</b> <span class="num-integrations"></span><br>
+                    <b>Integrating:</b> <span class="num-integrations"></span><br>
                 </p>
                 <div class="search-results" style="display: none">
                     <p><b>Peak ratio:</b> <span class="peak-ratio"></span></p>
@@ -33,6 +33,7 @@
                 </div>
             </div>
         </div>
+        <script src="colormap.js"></script>
         <script src="decode.js"></script>
     </body>
 </html>

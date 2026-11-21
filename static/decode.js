@@ -5,13 +5,14 @@ const DATA_RATE = 50;
 const PRN_PERIOD = 1023;
 
 // acquisition and tracking options
-const NUM_INTEGRATIONS = 5;
+const NUM_INTEGRATIONS_ACQ = 10;                // integration length is set by sample-server 
+const NUM_INTEGRATIONS_TRACK = 1;
 const FREQ_RANGE = 5e3;                         // Hz
 const FREQ_STEP = 250;                          // Hz
 const PEAK_RATIO_THRESHOLD = 1.5;
 
 // other preferences
-const IQ_BUF_LEN = 500;                         // how many IQ points to buffer per channel
+const IQ_BUF_LEN = 200;                         // how many IQ points to buffer per channel
 
 // generate PRN codes
 const generate_codes = () => {
@@ -63,7 +64,8 @@ const codes = generate_codes();
 
 // resample code w/ zero-order hold
 // sample_i is in samples; code_delay is in chips
-const sample_code = (prn, sample_i, code_delay) => codes[prn][Math.floor(sample_i/SAMPLE_RATE*CHIP_RATE + code_delay) % PRN_PERIOD];
+// result is rescaled to -1..1
+const sample_code = (prn, sample_i, code_delay) => codes[prn][Math.floor(sample_i/SAMPLE_RATE*CHIP_RATE + code_delay) % PRN_PERIOD] * 2 - 1;
 
 // complex multiplication
 const cmul = (I1, Q1, I2, Q2) => [I1*I2-Q1*Q2, I1*Q2 + I2*Q1];
@@ -85,7 +87,7 @@ const CHANNEL_STATE = {
 for(const prn in codes) {
     channels.push({
         prn_num: prn,                       
-        state: CHANNEL_STATE.NOT_FOUND  
+        state: CHANNEL_STATE.NOT_FOUND
     });
 }
 
@@ -99,7 +101,9 @@ const process_samples = ([I,Q]) => {
         if(channel.state == CHANNEL_STATE.TRACKING) {
 
             if(!channel.IQ) {
-                channel.IQ = [];             
+                channel.IQ = [];
+                channel.integrating_I = [];
+                channel.integrating_Q = [];             
             }
 
             // carrier removal
@@ -121,10 +125,25 @@ const process_samples = ([I,Q]) => {
                 correl_sum_Q += code * Q_freq_shifted[i];
             }
 
-            // TODO I&D
-            channel.IQ.push([correl_sum_I, correl_sum_Q]);
-            if(channel.IQ.length == IQ_BUF_LEN) {
-                channel.IQ.shift();
+            // I&D: when integration buffer is full, take average and add new IQ point
+            channel.integrating_I.push(correl_sum_I);
+            channel.integrating_Q.push(correl_sum_Q);
+            if(channel.integrating_I.length == NUM_INTEGRATIONS_TRACK) {
+
+                let integrated_I = 0, integrated_Q = 0;
+                for(let i = 0; i < NUM_INTEGRATIONS_TRACK; i++) {
+                    integrated_I += channel.integrating_I[i];
+                    integrated_Q += channel.integrating_Q[i];
+                }
+                channel.integrating_I = [];
+                channel.integrating_Q = [];
+
+                channel.IQ.push([integrated_I/NUM_INTEGRATIONS_TRACK, integrated_Q/NUM_INTEGRATIONS_TRACK]);
+                if(channel.IQ.length == IQ_BUF_LEN) {
+                    channel.IQ.shift();
+                }
+                channel.dom.iq_plot_stale = true;
+
             }
 
             // refine tracking estimates
@@ -134,7 +153,7 @@ const process_samples = ([I,Q]) => {
 
             if(!channel.correls) {
                 channel.correls = [];
-                channel.num_integrations = NUM_INTEGRATIONS;
+                channel.num_integrations = NUM_INTEGRATIONS_ACQ;
             } 
 
             // search over frequency range
@@ -208,6 +227,10 @@ const process_samples = ([I,Q]) => {
 
                 channel.dom.correls_plot_stale = true;
 
+                // TODO remove this
+                if(channel.prn_num < 32)
+                    channels[channel.prn_num].state = CHANNEL_STATE.SEARCHING;
+
             }
 
         }
@@ -237,6 +260,8 @@ const init_displays = () => {
         channel.dom.tracking_stats = div.querySelector(".tracking-stats");
         channel.dom.code_delay = div.querySelector(".code-delay");
         channel.dom.freq_shift = div.querySelector(".freq-shift");
+        channel.dom.iq_plot = div.querySelector(".iq-plot");
+        channel.dom.iq_plot_ctx = channel.dom.iq_plot.getContext("2d");
 
         channel.dom.search_progress = div.querySelector(".search-progress");
         channel.dom.num_integrations = div.querySelector(".num-integrations");
@@ -253,6 +278,80 @@ const init_displays = () => {
     }
 };
 
+const plot_correls = channel => {
+
+    const raw_canvas = channel.dom.correls_plot_raw;
+    const raw_ctx = channel.dom.correls_plot_raw_ctx;  
+
+    const canvas = channel.dom.correls_plot;
+    const ctx = channel.dom.correls_plot_ctx;
+
+    raw_canvas.width = channel.correls[0].length;
+    raw_canvas.height = channel.correls.length; 
+    const imageData = raw_ctx.createImageData(raw_canvas.width, raw_canvas.height);
+    
+    // we scale the heatmap by picking some random datapoints, taking their average, and using that as a baseline
+    let avg = 0;
+    for(let i = 0; i < 10; i++) {
+        avg += channel.correls[Math.floor(Math.random()*channel.correls.length)][Math.floor(Math.random()*channel.correls[0].length)];
+    }
+    avg /= 10;
+
+    for(let f_bin = 0; f_bin < channel.correls.length; f_bin++) {
+        for(let delay_bin = 0; delay_bin < channel.correls[0].length; delay_bin++) {
+            const idx = (f_bin * channel.correls[0].length + delay_bin) * 4;
+            const value = channel.correls[f_bin][delay_bin];
+            const scaled = value/avg*0.2;
+            const [r,g,b] = colormap(scaled, MAGMA);
+            imageData.data[idx]   = r*255;
+            imageData.data[idx+1] = g*255;
+            imageData.data[idx+2] = b*255;
+            imageData.data[idx+3] = 255;
+        }
+    }
+
+    raw_ctx.putImageData(imageData, 0, 0);
+
+    // draw the bitmap to the output canvas
+    ctx.drawImage(raw_canvas, 0, 0, canvas.width, canvas.height);
+
+    // highlight peak
+    ctx.strokeStyle = 'rgba(255,0,0,50%)';
+    ctx.beginPath();
+    ctx.arc(canvas.width * channel.peak_delay_bin / channel.correls[0].length, canvas.height * channel.peak_f_bin / channel.correls.length, 15, 0, 2 * Math.PI);
+    ctx.stroke();
+
+};  
+
+const plot_iq = channel => {
+
+    const canvas = channel.dom.iq_plot, ctx = channel.dom.iq_plot_ctx;
+
+    // scale so that zero is centered and no datapoints are clipped
+    let max = 0;
+    for(const [I,Q] of channel.IQ) {
+        max = Math.max(max, Math.abs(I), Math.abs(Q));
+    }
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    for(const stream of [0,1]) {
+        ctx.strokeStyle = ["#ff0000", "#0000ff"][stream];
+        ctx.beginPath();
+        for(let i = 0; i < channel.IQ.length; i++) {
+            const value = channel.IQ[i][stream];
+            const x = i/channel.IQ.length * (canvas.width-20) + 10;
+            const y = value/max * (canvas.height/2-10) + canvas.height/2;
+            if(i == 0)
+                ctx.moveTo(x, y);
+            else
+                ctx.lineTo(x, y);
+        }
+        ctx.stroke();   
+    }
+
+};
+
 const update_displays = () => {
 
     for(const channel of channels) {
@@ -261,9 +360,16 @@ const update_displays = () => {
         
         // only show tracking stats when tracking loop is active
         if(channel.state == CHANNEL_STATE.TRACKING) {
+            
             channel.dom.tracking_stats.style.display = "";
             channel.dom.code_delay.textContent = channel.code_delay;
             channel.dom.freq_shift.textContent = channel.freq_shift;
+
+            if(channel.dom.iq_plot_stale) {
+                plot_iq(channel);
+                channel.dom.iq_plot_stale = false;
+            }
+
         } else {
             channel.dom.tracking_stats.style.display = "none";
         }
@@ -271,58 +377,16 @@ const update_displays = () => {
         if(channel.num_integrations > 0) {
             channel.dom.search_results.style.display = "none";
             channel.dom.search_progress.style.display = "";
-            channel.dom.num_integrations.textContent = `${NUM_INTEGRATIONS - channel.num_integrations} / ${NUM_INTEGRATIONS}`;
+            channel.dom.num_integrations.textContent = `${NUM_INTEGRATIONS_ACQ - channel.num_integrations} / ${NUM_INTEGRATIONS_ACQ}`;
         } else if(channel.num_integrations == 0) {
             
             channel.dom.search_results.style.display = "";
             channel.dom.search_progress.style.display = "none";
             channel.dom.peak_ratio.textContent = Number(channel.peak_ratio).toPrecision(3);
 
-            // acquisition code indicates that replot is necessary by setting correls_plot_stale
             if(channel.dom.correls_plot_stale) {
-
-                const raw_canvas = channel.dom.correls_plot_raw;
-                const raw_ctx = channel.dom.correls_plot_raw_ctx;  
-
-                const canvas = channel.dom.correls_plot;
-                const ctx = channel.dom.correls_plot_ctx;
-
-                raw_canvas.width = channel.correls[0].length;
-                raw_canvas.height = channel.correls.length; 
-                const imageData = raw_ctx.createImageData(raw_canvas.width, raw_canvas.height);
-                
-                // we scale the heatmap by picking some random datapoints, taking their average, and using that as a baseline
-                let avg = 0;
-                for(let i = 0; i < 10; i++) {
-                    avg += channel.correls[Math.floor(Math.random()*channel.correls.length)][Math.floor(Math.random()*channel.correls[0].length)];
-                }
-                avg /= 10;
-
-                for(let f_bin = 0; f_bin < channel.correls.length; f_bin++) {
-                    for(let delay_bin = 0; delay_bin < channel.correls[0].length; delay_bin++) {
-                        const idx = (f_bin * channel.correls[0].length + delay_bin) * 4;
-                        const value = channel.correls[f_bin][delay_bin];
-                        const scaled = value/avg * 30;
-                        imageData.data[idx] = scaled;
-                        imageData.data[idx+1] = scaled;
-                        imageData.data[idx+2] = scaled;
-                        imageData.data[idx+3] = 255;
-                    }
-                }
-
-                raw_ctx.putImageData(imageData, 0, 0);
-
-                // draw the bitmap to the output canvas
-                ctx.drawImage(raw_canvas, 0, 0, canvas.width, canvas.height);
-
-                // highlight peak
-                ctx.strokeStyle = 'rgba(255,0,0,50%)';
-                ctx.beginPath();
-                ctx.arc(canvas.width * channel.peak_delay_bin / channel.correls[0].length, canvas.height * channel.peak_f_bin / channel.correls.length, 15, 0, 2 * Math.PI);
-                ctx.stroke();
-
+                plot_correls(channel);
                 channel.dom.correls_plot_stale = false;
-
             }
 
         } 
@@ -330,7 +394,7 @@ const update_displays = () => {
     }
 
     document.getElementById("sample-rate").textContent = (SAMPLE_RATE/1e6).toPrecision(3);
-    document.getElementById("acquisition-settings").textContent = `${NUM_INTEGRATIONS} integration(s); frequency range = \xB1${FREQ_RANGE} Hz, step=${FREQ_STEP} Hz; peak ratio threshold = ${PEAK_RATIO_THRESHOLD}`;
+    document.getElementById("acquisition-settings").textContent = `${NUM_INTEGRATIONS_ACQ} integration(s); frequency range = \xB1${FREQ_RANGE} Hz, step=${FREQ_STEP} Hz; peak ratio threshold = ${PEAK_RATIO_THRESHOLD}`;
     document.getElementById("num-samples").textContent = num_samples;
 
 };
@@ -342,7 +406,7 @@ const tick = () => {
             if(data) {
                 process_samples(data);
                 update_displays();
-                setTimeout(tick, 1000);
+                setTimeout(tick, 1000 / 5);
             }
         });
 };
