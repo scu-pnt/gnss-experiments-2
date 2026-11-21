@@ -89,13 +89,17 @@ for(const prn in codes) {
     channels.push({
         prn_num: prn,                       
         state: CHANNEL_STATE.NOT_FOUND,
-        search_timeout: NUM_INTEGRATIONS_ACQ*i
+        search_cooldown: NUM_INTEGRATIONS_ACQ*i
     });
     i++;
 }
 
 // track how many samples have been processed
 let num_samples = 0;
+
+const ingest_event = str => {
+    console.log(str); // TODO make this do something
+};
 
 const process_samples = ([I,Q]) => {
 
@@ -221,12 +225,13 @@ const process_samples = ([I,Q]) => {
                 channel.peak_delay_bin = max1_delay_bin;
 
                 if(channel.peak_ratio > PEAK_RATIO_THRESHOLD) {
+                    ingest_event(`acquired PRN ${channel.prn_num} at peak ratio ${channel.peak_ratio}`);
                     channel.state = CHANNEL_STATE.TRACKING;
                     channel.freq_shift = -FREQ_RANGE + max1_f_bin*FREQ_STEP;
                     channel.code_delay = max1_delay_bin;
                 } else {
                     channel.state = CHANNEL_STATE.NOT_FOUND;
-                    channel.search_timeout = NUM_INTEGRATIONS_ACQ * 10; // if nothing was found, don't search for another while
+                    channel.search_cooldown = NUM_INTEGRATIONS_ACQ * 40; // if nothing was found, don't search for another while
                 }
 
                 channel.dom.correls_plot_stale = true;
@@ -235,9 +240,9 @@ const process_samples = ([I,Q]) => {
 
         } else if(channel.state == CHANNEL_STATE.NOT_FOUND) {
 
-            // if the timeout has expired, start searching!
-            channel.search_timeout--;
-            if(channel.search_timeout <= 0) {
+            // if the cooldown has expired, start searching!
+            channel.search_cooldown--;
+            if(channel.search_cooldown <= 0) {
                 channel.correls = null;
                 channel.state = CHANNEL_STATE.SEARCHING;
             }
@@ -266,6 +271,9 @@ const init_displays = () => {
         div.querySelector(".prn-num").textContent = channel.prn_num;
 
         channel.dom.status = div.querySelector(".status");
+
+        channel.dom.search_cooldown = div.querySelector(".search-cooldown");
+        channel.dom.cooldown = div.querySelector(".cooldown");
 
         channel.dom.tracking_stats = div.querySelector(".tracking-stats");
         channel.dom.code_delay = div.querySelector(".code-delay");
@@ -368,6 +376,14 @@ const update_displays = () => {
         
         channel.dom.status.textContent = channel.state;
         
+        // show cooldown only when waiting
+        if(channel.state == CHANNEL_STATE.NOT_FOUND) {
+            channel.dom.search_cooldown.style.display = "";
+            channel.dom.cooldown.textContent = channel.search_cooldown;
+        } else {
+            channel.dom.search_cooldown.style.display = "none";
+        }
+
         // only show tracking stats when tracking loop is active
         if(channel.state == CHANNEL_STATE.TRACKING) {
             
@@ -384,6 +400,7 @@ const update_displays = () => {
             channel.dom.tracking_stats.style.display = "none";
         }
 
+        // if acquisition data is available, show it
         if(channel.num_integrations > 0) {
             channel.dom.search_results.style.display = "none";
             channel.dom.search_progress.style.display = "";
@@ -404,7 +421,7 @@ const update_displays = () => {
     }
 
     document.getElementById("sample-rate").textContent = (SAMPLE_RATE/1e6).toPrecision(3);
-    document.getElementById("acquisition-settings").textContent = `${NUM_INTEGRATIONS_ACQ} integration(s); frequency range = \xB1${FREQ_RANGE} Hz, step=${FREQ_STEP} Hz; peak ratio threshold = ${PEAK_RATIO_THRESHOLD}`;
+    document.getElementById("acquisition-settings").textContent = `${NUM_INTEGRATIONS_ACQ} integration(s); frequency range = \xB1${FREQ_RANGE} Hz, step = ${FREQ_STEP} Hz; peak ratio threshold = ${PEAK_RATIO_THRESHOLD}`;
     document.getElementById("num-samples").textContent = num_samples;
 
 };
