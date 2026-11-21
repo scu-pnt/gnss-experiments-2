@@ -9,7 +9,7 @@ const NUM_INTEGRATIONS_ACQ = 10;                // integration length is set by 
 const NUM_INTEGRATIONS_TRACK = 1;
 const FREQ_RANGE = 5e3;                         // Hz
 const FREQ_STEP = 250;                          // Hz
-const PEAK_RATIO_THRESHOLD = 1.5;
+const PEAK_RATIO_THRESHOLD = 1.3;
 
 // other preferences
 const IQ_BUF_LEN = 200;                         // how many IQ points to buffer per channel
@@ -84,11 +84,14 @@ const CHANNEL_STATE = {
     TRACKING: "tracking"
 };
 
+let i = 0;
 for(const prn in codes) {
     channels.push({
         prn_num: prn,                       
-        state: prn == 15 ? CHANNEL_STATE.SEARCHING : CHANNEL_STATE.NOT_FOUND
+        state: CHANNEL_STATE.NOT_FOUND,
+        search_timeout: NUM_INTEGRATIONS_ACQ*i
     });
+    i++;
 }
 
 // track how many samples have been processed
@@ -223,18 +226,27 @@ const process_samples = ([I,Q]) => {
                     channel.code_delay = max1_delay_bin;
                 } else {
                     channel.state = CHANNEL_STATE.NOT_FOUND;
+                    channel.search_timeout = NUM_INTEGRATIONS_ACQ * 10; // if nothing was found, don't search for another while
                 }
 
                 channel.dom.correls_plot_stale = true;
 
-                console.log(max1, max2);
+            }
 
+        } else if(channel.state == CHANNEL_STATE.NOT_FOUND) {
+
+            // if the timeout has expired, start searching!
+            channel.search_timeout--;
+            if(channel.search_timeout <= 0) {
+                channel.correls = null;
+                channel.state = CHANNEL_STATE.SEARCHING;
             }
 
         }
 
     }
 
+    // update global sample counter
     num_samples += I.length;
 
 };
@@ -299,7 +311,7 @@ const plot_correls = channel => {
         for(let delay_bin = 0; delay_bin < channel.correls[0].length; delay_bin++) {
             const idx = (f_bin * channel.correls[0].length + delay_bin) * 4;
             const value = channel.correls[f_bin][delay_bin];
-            const scaled = value/avg*0.2;
+            const scaled = (value/avg)**2*0.1;
             const [r,g,b] = colormap(scaled, MAGMA);
             imageData.data[idx]   = r*255;
             imageData.data[idx+1] = g*255;
