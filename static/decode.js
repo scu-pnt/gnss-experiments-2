@@ -92,7 +92,7 @@ for(const prn in codes) {
         prn_num: prn,                       
         state: CHANNEL_STATE.NOT_FOUND,
         //search_cooldown: NUM_INTEGRATIONS_ACQ*i
-        search_cooldown: prn == 22 ? 0 : 1e10
+        search_cooldown: 1e10
     });
     i++;
 }
@@ -113,7 +113,8 @@ const process_samples = ([I,Q]) => {
             if(!channel.IQ) {
                 channel.IQ = [];
                 channel.integrating_I = [];
-                channel.integrating_Q = [];             
+                channel.integrating_Q = [];      
+                channel.error = [];          
             }
 
             // carrier removal
@@ -149,12 +150,20 @@ const process_samples = ([I,Q]) => {
                 channel.integrating_Q = [];
 
                 channel.IQ = [integrated_I/NUM_INTEGRATIONS_TRACK, integrated_Q/NUM_INTEGRATIONS_TRACK];
-                channel.dom.iq_updated = true;
+                channel.iq_updated = true;
 
             }
 
-            // refine tracking estimates
-            // TODO
+            if(channel.iq_updated) {
+
+                const [I,Q] = channel.IQ;
+                const err = I*Q;
+
+
+
+                channel.error.push(I*Q);
+
+            }
 
         } else if(channel.state == CHANNEL_STATE.SEARCHING) {
 
@@ -282,6 +291,8 @@ const init_displays = () => {
         channel.dom.iq_plot_ctx = channel.dom.iq_plot.getContext("2d");
         channel.dom.iq_constellation_plot = div.querySelector(".iq-constellation");
         channel.dom.iq_constellation_plot_ctx = channel.dom.iq_constellation_plot.getContext("2d");
+        channel.dom.error_plot = div.querySelector(".error-plot");
+        channel.dom.error_plot_ctx = channel.dom.error_plot.getContext("2d");
 
         channel.dom.search_progress = div.querySelector(".search-progress");
         channel.dom.num_integrations = div.querySelector(".num-integrations");
@@ -343,25 +354,30 @@ const plot_correls = channel => {
 
 };  
 
-// TODO make this a generally reusable plotting function
-const plot_iq_waveform = channel => {
+const plot_waveforms = (canvas, ctx, series) => {
 
-    const canvas = channel.dom.iq_plot, ctx = channel.dom.iq_plot_ctx;
-
-    // scale so that zero is centered and no datapoints are clipped
     let max = 0;
-    for(const [I,Q] of channel.dom.iq_buf) {
-        max = Math.max(max, Math.abs(I), Math.abs(Q));
+    for(const {data} of series) {
+        for(const y of data) {
+            max = Math.max(max, Math.abs(y));
+        }
     }
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    for(const stream of [0,1]) {
-        ctx.strokeStyle = ["#ff0000", "#0000ff"][stream];
+    // draw zero level
+    ctx.beginPath();
+    ctx.strokeStyle = "rgba(0, 0, 0, 25%)";
+    ctx.moveTo(0, canvas.height/2); 
+    ctx.lineTo(canvas.width, canvas.height/2);
+    ctx.stroke();
+
+    for(const {data, color} of series) {
+        ctx.strokeStyle = color;
         ctx.beginPath();
-        for(let i = 0; i < channel.dom.iq_buf.length; i++) {
-            const value = channel.dom.iq_buf[i][stream];
-            const x = i/channel.dom.iq_buf.length * (canvas.width-20) + 10;
+        for(let i = 0; i < data.length; i++) {
+            const value = data[i];
+            const x = i/data.length * (canvas.width-20) + 10;
             const y = value/max * (canvas.height/2-10) + canvas.height/2;
             if(i == 0)
                 ctx.moveTo(x, y);
@@ -419,7 +435,7 @@ const update_displays = () => {
             channel.dom.freq_shift.textContent = channel.freq_shift;
 
             // if new iq points are available...
-            if(channel.dom.iq_updated) {
+            if(channel.iq_updated) {
                 
                 // update the waveform buffer
                 if(!channel.dom.iq_buf) {
@@ -440,8 +456,14 @@ const update_displays = () => {
                     channel.dom.iq_points_buf = [];
                 }
 
-                plot_iq_waveform(channel);
+                plot_waveforms(channel.dom.iq_plot, channel.dom.iq_plot_ctx, [
+                    {data: channel.dom.iq_buf.map(([I,_])=>I), color: "#ff0000"},
+                    {data: channel.dom.iq_buf.map(([_,Q])=>Q), color: "#0000ff"}
+                ]);
                 channel.dom.iq_plot_stale = false;
+                
+                plot_waveforms(channel.dom.error_plot, channel.dom.error_plot_ctx, [{data: channel.error, color: "#00ff00"}]);
+            
             }
 
         } else {

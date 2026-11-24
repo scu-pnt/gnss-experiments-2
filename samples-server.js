@@ -27,6 +27,7 @@ app.get("/samples", async (req, res) => {
     const {bytesRead} = await dataFile.read(buf, 0, null, num_read == 0 ? 0 : -1);
     if(bytesRead == 0) {
         res.json(null);
+        return;
     }
 
     const numSamples = Math.floor(bytesRead / 8);
